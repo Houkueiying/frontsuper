@@ -1,0 +1,25 @@
+        #wayne{
+            color: gold;
+        }
+        .red{
+            color: red;
+        }
+        h1{
+            color: blue;
+        }
+        
+        .blue3{
+            color: rgb(255, 0, 200);
+            font-size: 20px;
+        }
+
+        #wayne .yello{
+            color: yellow;
+            font-size: 10px;
+        }
+
+        #wayne img
+        {
+            width: 100px;
+            opacity: 20;
+        }
