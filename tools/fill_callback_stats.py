@@ -9,7 +9,7 @@
 統計表格式（工作表「115年回收率」）：
     第 1 列  日期標題（B1、C1…，例如「1月2日」「10月1日」或日期格式）
     第 2 列  實際看診人數      ＝ 當日名單總筆數 − AE 欄含「[未看診]」的筆數
-    第 4~21 列 A 欄醫師名字    ＝ 當日該醫師「黃色底（已電訪）」的筆數，一筆填 1
+    第 4~21 列 A 欄醫師名字    ＝ 當日該醫師的名單筆數（同醫師兩個不同個案 ＝ 2）
     第 22 列 病人實際衛教人數  ＝ 當日黃色底（已電訪）的總筆數
 
 名單格式（月份資料夾內的 .xlsx / .csv）：
@@ -113,7 +113,7 @@ def read_source_file(path):
     notseen_idx = column_index_from_string(SRC_NOTSEEN_COL) - 1
 
     total = notseen = callback_total = 0
-    callbacks = Counter()
+    records = Counter()   # 每位醫師的全部名單筆數
 
     if path.suffix.lower() == ".csv":
         with open(path, encoding="utf-8-sig", newline="") as f:
@@ -148,6 +148,7 @@ def read_source_file(path):
             if not name:
                 continue
             total += 1
+            records[name] += 1
 
             if notseen_idx < len(values) and values[notseen_idx] and SRC_NOTSEEN_TEXT in str(values[notseen_idx]):
                 notseen += 1
@@ -161,15 +162,14 @@ def read_source_file(path):
             else:
                 called = False
             if called:
-                callbacks[name] += 1
                 callback_total += 1
 
-    return total, notseen, callbacks, callback_total
+    return total, notseen, records, callback_total
 
 
 def collect_by_date(folder):
     """依檔名 (月, 日) 彙總所有名單。"""
-    agg = defaultdict(lambda: {"total": 0, "notseen": 0, "callbacks": Counter(), "callback_total": 0})
+    agg = defaultdict(lambda: {"total": 0, "notseen": 0, "records": Counter(), "callback_total": 0})
     for path in sorted(folder.iterdir()):
         if not path.is_file() or path.suffix.lower() not in (".xlsx", ".xlsm", ".csv"):
             continue
@@ -179,12 +179,12 @@ def collect_by_date(folder):
         if md is None:
             print(f"[略過] 檔名看不出日期：{path.name}")
             continue
-        total, notseen, callbacks, cb_total = read_source_file(path)
+        total, notseen, records, cb_total = read_source_file(path)
         print(f"[讀取] {path.name} → {md[0]}/{md[1]}：總 {total}、未看診 {notseen}、電訪 {cb_total}")
         a = agg[md]
         a["total"] += total
         a["notseen"] += notseen
-        a["callbacks"] += callbacks
+        a["records"] += records
         a["callback_total"] += cb_total
     return agg
 
@@ -225,7 +225,7 @@ def fill_stats(agg, stats_file, dry_run=False):
             ws.cell(STATS_TOTAL_ROW, col).value = seen
             ws.cell(STATS_CALLBACK_ROW, col).value = a["callback_total"]
 
-        for name, n in a["callbacks"].items():
+        for name, n in a["records"].items():
             row = doctor_rows.get(name)
             if row is None:
                 unmatched.add(name)
