@@ -15,7 +15,7 @@
 名單格式（月份資料夾內的 .xlsx / .csv）：
     G 欄  醫師名字
     AE 欄 含「[未看診]」表示未看診
-    病人欄（標題含「病人」）有黃色底圖 ＝ 已電訪
+    姓名欄（標題含「姓名」或「病人」）有黃色底圖 ＝ 已電訪
     檔名含日期，例如 1151015.xlsx（民國）或 20261015.xlsx
 寫入前會先備份統計表。
 """
@@ -44,7 +44,7 @@ STATS_CALLBACK_ROW = 22            # 病人實際衛教人數
 SRC_DOCTOR_COL = "G"               # 名單中醫師名字欄
 SRC_NOTSEEN_COL = "AE"             # 名單中「[未看診]」所在欄
 SRC_NOTSEEN_TEXT = "[未看診]"
-SRC_PATIENT_HEADER = "病人"         # 用來找「病人」欄（黃底判斷電訪）
+SRC_PATIENT_HEADERS = ("姓名", "病人")  # 依序尋找標題，用來判斷黃底（電訪）的欄位
 # =====================================================================
 
 FILE_DATE_PATTERNS = [
@@ -133,9 +133,12 @@ def read_source_file(path):
             continue
         header = rows[0][0]
         patient_idx = None
-        for j, v in enumerate(header):
-            if v and SRC_PATIENT_HEADER in str(v):
-                patient_idx = j
+        for keyword in SRC_PATIENT_HEADERS:
+            for j, v in enumerate(header):
+                if v and keyword in str(v):
+                    patient_idx = j
+                    break
+            if patient_idx is not None:
                 break
 
         for values, cells in rows[1:]:
