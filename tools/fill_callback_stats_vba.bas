@@ -234,21 +234,33 @@ Private Function MDKeyFromHeader(ByVal v As Variant) As String
     End If
 End Function
 
-' 檔名 → "月/日"（支援 1151001 民國、20261001 西元）
+' 檔名 → "月/日"（支援 115.10.1 民國點號格式、1151001 民國、20261001 西元）
 Private Function MDKeyFromFileName(ByVal fn As String) As String
-    Dim re As Object, s As String, y As Long, mo As Long, d As Long
+    Dim re As Object, mt As Object, s As String
+    Dim y As Long, mo As Long, d As Long
     Set re = CreateObject("VBScript.RegExp")
-    re.Pattern = "(?:^|\D)(\d{7}|\d{8})(?:\D|$)"
-    If Not re.Test(fn) Then Exit Function
-    s = re.Execute(fn)(0).SubMatches(0)
-    If Len(s) = 7 Then
-        y = CLng(Left(s, 3)) + 1911
-        mo = CLng(Mid(s, 4, 2))
-        d = CLng(Right(s, 2))
+
+    ' 1) 民國 115.10.1 （也接受 115-10-01、115_10_1）
+    re.Pattern = "(?:^|\D)(\d{3})[.\-_](\d{1,2})[.\-_](\d{1,2})(?!\d)"
+    If re.Test(fn) Then
+        Set mt = re.Execute(fn)(0)
+        y = CLng(mt.SubMatches(0)) + 1911
+        mo = CLng(mt.SubMatches(1))
+        d = CLng(mt.SubMatches(2))
     Else
-        y = CLng(Left(s, 4))
-        mo = CLng(Mid(s, 5, 2))
-        d = CLng(Right(s, 2))
+        ' 2) 1151001（民國）或 20261001（西元）
+        re.Pattern = "(?:^|\D)(\d{7}|\d{8})(?:\D|$)"
+        If Not re.Test(fn) Then Exit Function
+        s = re.Execute(fn)(0).SubMatches(0)
+        If Len(s) = 7 Then
+            y = CLng(Left(s, 3)) + 1911
+            mo = CLng(Mid(s, 4, 2))
+            d = CLng(Right(s, 2))
+        Else
+            y = CLng(Left(s, 4))
+            mo = CLng(Mid(s, 5, 2))
+            d = CLng(Right(s, 2))
+        End If
     End If
     If mo < 1 Or mo > 12 Or d < 1 Or d > 31 Then Exit Function
     MDKeyFromFileName = mo & "/" & d
