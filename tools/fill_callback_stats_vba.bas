@@ -86,10 +86,20 @@ Private Sub RunFill(ByVal writeMode As Boolean)
         End If
     Next f
 
-    ' 寫入前先備份
+    ' 寫入前先備份（存到本機資料夾，因為統計表若在 OneDrive 上，無法直接備份到同一路徑）
     If writeMode Then
-        bakPath = ThisWorkbook.Path & "\統計表_備份_" & Format(Now, "yyyymmdd_hhnnss") & ".xlsm"
+        Dim bakFolder As String
+        bakFolder = Environ("USERPROFILE") & "\電訪統計備份"
+        If Dir(bakFolder, vbDirectory) = "" Then MkDir bakFolder
+        bakPath = bakFolder & "\統計表_備份_" & Format(Now, "yyyymmdd_hhnnss") & ".xlsm"
+        On Error Resume Next
         ThisWorkbook.SaveCopyAs bakPath
+        If Err.Number <> 0 Then
+            On Error GoTo 0
+            MsgBox "備份失敗，已停止，沒有寫入任何資料。" & vbLf & Err.Description, vbCritical, "備份失敗"
+            Exit Sub
+        End If
+        On Error GoTo 0
         log = log & "[備份] " & bakPath & vbLf
     End If
 
