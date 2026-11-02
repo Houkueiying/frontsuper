@@ -11,26 +11,28 @@ Private Const DOCTOR_LAST_ROW As Long = 21     ' A21
 Private Const ROW_TOTAL As Long = 2            ' 實際看診人數
 Private Const ROW_CALLBACK As Long = 22        ' 病人實際衛教人數
 Private Const HEADER_ROW As Long = 1           ' 日期標題列
+Private Const FORMULA_LAST_ROW As Long = 30    ' 新增欄位時，複製公式到哪一列
 
 Public Sub 預覽()
     RunFill False
 End Sub
 
 Public Sub 正式填入()
-    If MsgBox("確定要寫入統計表嗎？寫入前會先自動備份。", vbYesNo + vbQuestion, "正式填入") = vbYes Then
+    If MsgBox("確定要寫入統計表嗎？缺少的日期欄會自動新增，寫入前會先自動備份。", vbYesNo + vbQuestion, "正式填入") = vbYes Then
         RunFill True
     End If
 End Sub
 
 Private Sub RunFill(ByVal writeMode As Boolean)
     Dim stats As Worksheet
-    Dim doctorRow As Object, dateCol As Object, unmatched As Object
+    Dim doctorRow As Object, dateCol As Object, unmatched As Object, done As Object
     Dim totalD As Object, notSeenD As Object, cbD As Object, recsD As Object
     Dim files As Collection, fname As Variant, f As Variant
     Dim wb As Workbook, ws As Worksheet
-    Dim key As String, log As String, bakPath As String
+    Dim key As String, log As String, bakPath As String, warn As String, tmp As String
     Dim k As Variant, nmk As Variant
-    Dim col As Long, seen As Long, r As Long, lastCol As Long
+    Dim col As Long, seen As Long, r As Long, insAt As Long
+    Dim doWrite As Boolean
 
     On Error Resume Next
     Set stats = ThisWorkbook.Worksheets(STATS_SHEET)
@@ -52,24 +54,15 @@ Private Sub RunFill(ByVal writeMode As Boolean)
     Next r
 
     ' 日期 → 欄號（第 1 列）
-    Set dateCol = CreateObject("Scripting.Dictionary")
-    lastCol = stats.Cells(HEADER_ROW, stats.Columns.Count).End(xlToLeft).Column
-    For col = 2 To lastCol
-        key = MDKeyFromHeader(stats.Cells(HEADER_ROW, col).Value)
-        If key <> "" Then
-            If dateCol.Exists(key) Then
-                log = log & "[警告] 日期 " & key & " 重複，使用第 " & dateCol(key) & " 欄" & vbLf
-            Else
-                dateCol(key) = col
-            End If
-        End If
-    Next col
+    Set dateCol = BuildDateCols(stats, warn)
+    log = warn
 
     Set totalD = CreateObject("Scripting.Dictionary")
     Set notSeenD = CreateObject("Scripting.Dictionary")
     Set cbD = CreateObject("Scripting.Dictionary")
     Set recsD = CreateObject("Scripting.Dictionary")
     Set unmatched = CreateObject("Scripting.Dictionary")
+    Set done = CreateObject("Scripting.Dictionary")
 
     ' 先收集檔名
     Set files = New Collection
@@ -100,27 +93,44 @@ Private Sub RunFill(ByVal writeMode As Boolean)
         log = log & "[備份] " & bakPath & vbLf
     End If
 
-    ' 產生結果（預覽或寫入）
-    For Each k In totalD.Keys
-        If dateCol.Exists(k) Then
-            col = dateCol(k)
-            seen = totalD(k) - notSeenD(k)
-            log = log & k & " → 實際看診 " & seen & "、病人實際衛教 " & cbD(k) & vbLf
-            If writeMode Then
-                stats.Cells(ROW_TOTAL, col).Value = seen
-                stats.Cells(ROW_CALLBACK, col).Value = cbD(k)
-            End If
-            For Each nmk In recsD(k).Keys
-                If doctorRow.Exists(nmk) Then
-                    log = log & "    " & nmk & " → 第" & doctorRow(nmk) & "列 = " & recsD(k)(nmk) & vbLf
-                    If writeMode Then stats.Cells(doctorRow(nmk), col).Value = recsD(k)(nmk)
-                Else
-                    unmatched(nmk) = True
-                End If
-            Next nmk
+    ' 補上統計表缺少的日期欄（預覽只列出，正式填入才真的新增）
+    Do
+        key = NextMissingKey(totalD, dateCol, done)
+        If key = "" Then Exit Do
+        done(key) = True
+        If writeMode Then
+            insAt = InsertPos(dateCol, key)
+            stats.Columns(insAt).Insert
+            stats.Cells(HEADER_ROW, insAt).Value = Split(key, "/")(0) & "月" & Split(key, "/")(1) & "日"
+            CopyFormulas stats, insAt
+            Set dateCol = BuildDateCols(stats, tmp)
+            log = log & "[已新增欄位] " & key & " → 第 " & insAt & " 欄" & vbLf
         Else
-            log = log & "[警告] 統計表找不到 " & k & " 的欄位，略過" & vbLf
+            log = log & "[將新增欄位] " & key & vbLf
         End If
+    Loop
+
+    ' 產生結果
+    For Each k In totalD.Keys
+        seen = totalD(k) - notSeenD(k)
+        col = 0
+        If dateCol.Exists(k) Then col = dateCol(k)
+        doWrite = (writeMode And col > 0)
+
+        log = log & k & " → 實際看診 " & seen & "、病人實際衛教 " & cbD(k) & vbLf
+        If doWrite Then
+            stats.Cells(ROW_TOTAL, col).Value = seen
+            stats.Cells(ROW_CALLBACK, col).Value = cbD(k)
+        End If
+
+        For Each nmk In recsD(k).Keys
+            If doctorRow.Exists(nmk) Then
+                log = log & "    " & nmk & " → 第" & doctorRow(nmk) & "列 = " & recsD(k)(nmk) & vbLf
+                If doWrite Then stats.Cells(doctorRow(nmk), col).Value = recsD(k)(nmk)
+            Else
+                unmatched(nmk) = True
+            End If
+        Next nmk
     Next k
 
     If unmatched.Count > 0 Then
@@ -137,6 +147,85 @@ Private Sub RunFill(ByVal writeMode As Boolean)
     Debug.Print log
     MsgBox Left(log, 1500), vbInformation, "電訪統計"
 End Sub
+
+' 統計表日期欄：回傳 {"月/日": 欄號}；重複日期會記錄到 warn
+Private Function BuildDateCols(stats As Worksheet, ByRef warn As String) As Object
+    Dim d As Object, col As Long, lastCol As Long, key As String
+    Set d = CreateObject("Scripting.Dictionary")
+    lastCol = stats.Cells(HEADER_ROW, stats.Columns.Count).End(xlToLeft).Column
+    For col = 2 To lastCol
+        key = MDKeyFromHeader(stats.Cells(HEADER_ROW, col).Value)
+        If key <> "" Then
+            If d.Exists(key) Then
+                warn = warn & "[警告] 日期 " & key & " 重複，使用第 " & d(key) & " 欄" & vbLf
+            Else
+                d(key) = col
+            End If
+        End If
+    Next col
+    Set BuildDateCols = d
+End Function
+
+' 找出下一個缺少的日期（日期由小到大）
+Private Function NextMissingKey(totalD As Object, dateCol As Object, done As Object) As String
+    Dim k As Variant, best As String, bestNum As Long
+    bestNum = 999999
+    For Each k In totalD.Keys
+        If Not dateCol.Exists(k) And Not done.Exists(k) Then
+            If KeyNum(CStr(k)) < bestNum Then
+                bestNum = KeyNum(CStr(k))
+                best = CStr(k)
+            End If
+        End If
+    Next k
+    NextMissingKey = best
+End Function
+
+' 新日期要插入的位置：插在日期比它早、最接近的欄位之後
+Private Function InsertPos(dateCol As Object, ByVal key As String) As Long
+    Dim k As Variant, nk As Long, bestNum As Long, bestCol As Long, minCol As Long
+    nk = KeyNum(key)
+    bestNum = -1
+    bestCol = 0
+    minCol = 999999
+    For Each k In dateCol.Keys
+        If dateCol(k) < minCol Then minCol = dateCol(k)
+        If KeyNum(CStr(k)) < nk And KeyNum(CStr(k)) > bestNum Then
+            bestNum = KeyNum(CStr(k))
+            bestCol = dateCol(k)
+        End If
+    Next k
+    If bestCol > 0 Then
+        InsertPos = bestCol + 1
+    ElseIf minCol < 999999 Then
+        InsertPos = minCol
+    Else
+        InsertPos = 2
+    End If
+End Function
+
+' 新欄位的公式（第 23 列以後）從左邊那欄複製，格式也一併沿用
+Private Sub CopyFormulas(stats As Worksheet, ByVal insAt As Long)
+    Dim src As Long, r As Long
+    If insAt > 2 Then
+        src = insAt - 1
+    Else
+        src = insAt + 1
+    End If
+    For r = ROW_CALLBACK + 1 To FORMULA_LAST_ROW
+        If stats.Cells(r, src).HasFormula Then
+            stats.Cells(r, insAt).FormulaR1C1 = stats.Cells(r, src).FormulaR1C1
+        End If
+    Next r
+    stats.Columns(insAt).ColumnWidth = stats.Columns(src).ColumnWidth
+End Sub
+
+' "月/日" 轉成可比較的數字，例如 10/10 → 1010
+Private Function KeyNum(ByVal key As String) As Long
+    Dim p As Variant
+    p = Split(key, "/")
+    KeyNum = CLng(p(0)) * 100 + CLng(p(1))
+End Function
 
 ' 統計每個名單檔：總筆數、未看診、醫師筆數、黃底（已電訪）
 Private Sub CountSheet(ws As Worksheet, ByVal key As String, totalD As Object, _
